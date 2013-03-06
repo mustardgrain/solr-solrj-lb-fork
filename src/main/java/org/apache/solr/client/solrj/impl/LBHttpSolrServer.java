@@ -16,8 +16,16 @@
  */
 package org.apache.solr.client.solrj.impl;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.http.HttpException;
+import org.apache.http.HttpRequest;
+import org.apache.http.HttpRequestInterceptor;
 import org.apache.http.client.HttpClient;
+import org.apache.http.impl.client.AbstractHttpClient;
+import org.apache.http.protocol.HttpContext;
 import org.apache.solr.client.solrj.*;
+import org.apache.solr.client.solrj.SolrRequest.METHOD;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
@@ -86,6 +94,8 @@ public class LBHttpSolrServer extends SolrServer {
 
   private static final SolrQuery solrQuery = new SolrQuery("*:*");
   private final ResponseParser parser;
+
+  private static final Log LOG = LogFactory.getLog(LBHttpSolrServer.class);
 
   static {
     solrQuery.setRows(0);
@@ -214,7 +224,15 @@ public class LBHttpSolrServer extends SolrServer {
     return new HttpSolrServer(server, httpClient, parser);
   }
 
+  public void setUserAgent(final String userAgent) {
+    ((AbstractHttpClient) httpClient).addRequestInterceptor(new HttpRequestInterceptor() {
 
+      @Override
+      public void process(HttpRequest request, HttpContext context) throws HttpException, IOException {
+          request.setHeader("User-Agent", userAgent);
+      }
+    });
+  }
 
   /**
    * Tries to query a live server from the list provided in Req. Servers in the dead pool are skipped.
@@ -337,6 +355,10 @@ public class LBHttpSolrServer extends SolrServer {
     wrapper.standard = false;
     zombieServers.put(wrapper.getKey(), wrapper);
     startAliveCheckExecutor();
+    
+    if (LOG.isWarnEnabled())
+        LOG.warn("Marking server " + wrapper.solrServer.getBaseURL() + " inactive; cause: " + e.getMessage(), e);
+
     return e;
   }  
 
@@ -424,6 +446,8 @@ public class LBHttpSolrServer extends SolrServer {
   @Override
   public NamedList<Object> request(final SolrRequest request)
           throws SolrServerException, IOException {
+    // Force to POST to prevent GET overflows and request logging sensitivity.
+    request.setMethod(METHOD.POST);
     Exception ex = null;
     ServerWrapper[] serverList = aliveServerList;
     
@@ -443,7 +467,7 @@ public class LBHttpSolrServer extends SolrServer {
       } catch (SolrServerException e) {
         if (e.getRootCause() instanceof IOException) {
           ex = e;
-          moveAliveToDead(wrapper);
+          moveAliveToDead(wrapper, e);
           if (justFailed == null) justFailed = new HashMap<String,ServerWrapper>();
           justFailed.put(wrapper.getKey(), wrapper);
         } else {
@@ -463,6 +487,11 @@ public class LBHttpSolrServer extends SolrServer {
         // remove from zombie list *before* adding to alive to avoid a race that could lose a server
         zombieServers.remove(wrapper.getKey());
         addToAlive(wrapper);
+
+        if (LOG.isInfoEnabled())
+            LOG.info("Marking server " + wrapper.solrServer.getBaseURL()
+                     + " active after exhausting attempts to contact known active servers failed");
+
         return rsp;
       } catch (SolrException e) {
         // Server is alive but the request was malformed or invalid
@@ -512,11 +541,17 @@ public class LBHttpSolrServer extends SolrServer {
         } else {
           // something else already moved the server from zombie to alive
         }
+
+        if (LOG.isInfoEnabled())
+            LOG.info("Marking server " + zombieServer.solrServer.getBaseURL() + " active after check");
       }
     } catch (Exception e) {
       //Expected. The server is still down.
       zombieServer.failedPings++;
 
+      if (LOG.isWarnEnabled())
+          LOG.warn("Server " + zombieServer.solrServer.getBaseURL() + " still inactive after " + zombieServer.failedPings + " checks", e);
+      
       // If the server doesn't belong in the standard set belonging to this load balancer
       // then simply drop it after a certain number of failed pings.
       if (!zombieServer.standard && zombieServer.failedPings >= NONSTANDARD_PING_LIMIT) {
@@ -525,12 +560,15 @@ public class LBHttpSolrServer extends SolrServer {
     }
   }
 
-  private void moveAliveToDead(ServerWrapper wrapper) {
+  private void moveAliveToDead(ServerWrapper wrapper, Throwable t) {
     wrapper = removeFromAlive(wrapper.getKey());
     if (wrapper == null)
       return;  // another thread already detected the failure and removed it
     zombieServers.put(wrapper.getKey(), wrapper);
     startAliveCheckExecutor();
+    
+    if (LOG.isWarnEnabled())
+        LOG.warn("Marking server " + wrapper.solrServer.getBaseURL() + " inactive; cause: " + t.getMessage(), t);
   }
 
   private int interval = CHECK_INTERVAL;

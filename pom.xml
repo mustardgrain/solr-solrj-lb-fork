@@ -4,7 +4,7 @@
   <groupId>org.apache.solr</groupId>
   <artifactId>solr-solrj-lb-fork</artifactId>
   <packaging>jar</packaging>
-  <version>1.0</version>
+  <version>4.1.0</version>
   <name>SolrJ Load Balancing Fork</name>
   <dependencies>
     <dependency>
@@ -13,9 +13,14 @@
       <version>4.1.0</version>
     </dependency>
     <dependency>
-      <groupId>log4j</groupId>
-      <artifactId>log4j</artifactId>
-      <version>1.2.16</version>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
+      <version>3.1</version>
+    </dependency>
+    <dependency>
+      <groupId>commons-logging</groupId>
+      <artifactId>commons-logging</artifactId>
+      <version>1.1.1</version>
     </dependency>
     <dependency>
       <groupId>junit</groupId>
