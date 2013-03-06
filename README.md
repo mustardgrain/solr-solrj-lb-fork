@@ -1,4 +1,4 @@
-solrj-ex
+solr-solrj-lb-fork
 ========
 
-An extended version of the SolrJ Solr client that meets operational needs.
+An extended version of the SolrJ load balancing client that meets operational needs.
